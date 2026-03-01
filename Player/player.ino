@@ -1,36 +1,34 @@
 #include <WiFi.h>
+#include <Wire.h>
 #include <esp_now.h>
 #include <esp_wifi.h>
-#include <Adafruit_MPU6050.h>
-#include <Adafruit_Sensor.h>
-
-Adafruit_MPU6050 lmpu; 
-Adafruit_MPU6050 rmpu;
 
 // Address of main board (MAC Adress: 68:B6:B3:37:F1:64 )
 uint8_t main_macAddr[] = {0x68, 0xB6, 0xB3, 0x37, 0xF1, 0x64};
 esp_now_peer_info_t peerInfo;
 
-typedef struct message{
-    uint8_t type;
+typedef struct message_struct{
+    uint8_t type;   
     int id;
     float lx;
     float ly;
-    float lz;
+    // float lz;
     float rx;
     float ry;
-    float rz;
-} message;
+    // float rz;
+} message_struct;
 
-typedef struct check{
+typedef struct check_struct{
     uint8_t type;
     int id;
     bool player;
     bool send;
-} check;
+} check_struct;
 
-message data_recv;
-check status;
+message_struct data_recv;
+check_struct status;
+
+int16_t lAcX, lAcY, lAcZ, rAcX, rAcY, rAcZ;
 
 void esp_recv(const esp_now_recv_info_t * esp_now_info, const uint8_t *dataRecv, int len){
     memcpy(&status, dataRecv, sizeof(status));
@@ -54,42 +52,58 @@ void connect_espnow(){
 }
 
 void setup_mpu(){
-    // right mpu ต่อ VCC
     Wire.begin(4, 5);
-    if (!rmpu.begin(0x68)) {
-        printf("Failed to find Right MPU6050\n");
-        while (1) {
-            delay(10);
-        }
-    }
-    printf("Right MPU6050 Found!\n");
 
-    // left mpu ต่อ GND
-    if (!lmpu.begin(0x69)) {
-        printf("Failed to find Left MPU6050\n");
-        while (1) {
-            delay(10);
-        }
-    }
-    printf("Left MPU6050 Found!\n");
+    // rmpu
+    Wire.beginTransmission(0x68);
+    Wire.write(0x6B);
+    Wire.write(0);
+    Wire.endTransmission(true);
+
+    // lmpu
+    Wire.beginTransmission(0x69);
+    Wire.write(0x6B);
+    Wire.write(0);
+    Wire.endTransmission(true);
+  
+    Serial.println("MPU6050 Initialized!");
 }
 
 void read_sensors() {
-    sensors_event_t la, lg, ltemp;
-    sensors_event_t ra, rg, rtemp;
-
-    lmpu.getEvent(&la, &lg, &ltemp);
-    rmpu.getEvent(&ra, &rg, &rtemp);
+    Wire.beginTransmission(0x68);
+    Wire.write(0x3B);  // เริ่มดึงข้อมูลจาก Register ของ Accel X
+    Wire.endTransmission(false);
     
-    data_recv.lx = lg.gyro.x*(180/3.1415926535);
-    data_recv.ly = lg.gyro.y*(180/3.1415926535);
-    data_recv.lz = lg.gyro.z*(180/3.1415926535);
-    data_recv.rx = rg.gyro.x*(180/3.1415926535);
-    data_recv.ry = rg.gyro.y*(180/3.1415926535);
-    data_recv.rz = rg.gyro.z*(180/3.1415926535);
+    Wire.requestFrom((uint16_t)(0x68), (uint8_t)6, true);
+    lAcX = Wire.read()<<8 | Wire.read();  
+    lAcY = Wire.read()<<8 | Wire.read();  
+    lAcZ = Wire.read()<<8 | Wire.read();
 
-    printf("Right: %.2f, %.2f, %.2f\n", data_recv.rx, data_recv.ry, data_recv.rz);
-    printf("Left: %.2f, %.2f, %.2f\n", data_recv.lx, data_recv.ly, data_recv.lz);
+    Wire.beginTransmission(0x69);
+    Wire.write(0x3B); 
+    Wire.endTransmission(false);
+    
+    Wire.requestFrom((uint16_t)0x69, (uint8_t)6, true);
+    rAcX = Wire.read()<<8 | Wire.read();  
+    rAcY = Wire.read()<<8 | Wire.read();  
+    rAcZ = Wire.read()<<8 | Wire.read();
+
+    float lx = atan2(lAcY, lAcZ) * (180.0 / 3.1415926535);
+    float ly = atan2(-lAcX, sqrt((long)lAcY * lAcY + (long)lAcZ * lAcZ)) * (180.0 / 3.1415926535);
+
+    float rx = atan2(rAcY, rAcZ) * (180.0 / 3.1415926535);
+    float ry = atan2(-rAcX, sqrt((long)rAcY * rAcY + (long)rAcZ * rAcZ)) * (180.0 / 3.1415926535);
+    
+    data_recv.lx = lx;
+    data_recv.ly = ly;
+
+    data_recv.rx = rx;
+    data_recv.ry = ry;
+
+    printf("Right: %.2f, %.2f, %.2f\n", data_recv.rx, data_recv.ry);
+    printf("Left: %.2f, %.2f, %.2f\n", data_recv.lx, data_recv.ly);
+
+    esp_now_send(main_macAddr, (uint8_t *) &data_recv, sizeof(data_recv));
 }
 
 void setup(){
@@ -121,7 +135,7 @@ void setup(){
 void loop(){
     while (status.send){
         read_sensors();
-        delay(100);
+        delay(200);
     }
-    delay(250);
+    delay(200);
 }
