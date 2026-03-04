@@ -14,20 +14,23 @@ int left, right;
 float lx, ly, rx, ry;
 int16_t lAcX, lAcY, lAcZ, rAcX, rAcY, rAcZ;
 
+// type 1 
 typedef struct message_struct{
-    uint8_t type;
+    uint8_t type = 1;
     int lhand;
     int rhand;
 } message_struct;
 
-typedef struct check_struct{
-    uint8_t type;
-    bool player;
-    bool send;
-} check_struct;
+// type 2
+typedef struct status_struct{
+    uint8_t type = 2;
+    bool esp_main;
+    bool esp_player;
+    bool send_recv;
+} status_struct;
 
-volatile check_struct status;
-volatile message_struct data_recv;
+volatile status_struct  global_status;
+volatile message_struct global_data;
 
 // ---------------------------------------------------------
 // MPU Setting and Comfigure
@@ -92,7 +95,15 @@ void connect_espnow(){
 }
 
 void esp_recv(const esp_now_recv_info_t * esp_now_info, const uint8_t *dataRecv, int len){
-    memcpy((void *)&status, dataRecv, sizeof(status));
+    uint8_t incoming_type = dataRecv[0];
+
+    if (incoming_type == 1)
+        memcpy((void *)&global_data, dataRecv, sizeof(global_data));
+    else if (incoming_type == 2)
+        memcpy((void *)&global_status, dataRecv, sizeof(global_status));
+    
+    // for debug
+    // printf("Unknown Struct Type received!\n");
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -140,10 +151,10 @@ void read_mpu6050() {
     // printf("Left:  %.2f, %.2f\n", lx, ly);
     // printf("right: %d | left %d\n\n", left, right);
 
-    data_recv.lhand = left;
-    data_recv.rhand = right;
+    global_data.lhand = left;
+    global_data.rhand = right;
 
-    esp_now_send(main_macAddr, (uint8_t *) &data_recv, sizeof(data_recv));
+    esp_now_send(main_macAddr, (uint8_t *) &global_data, sizeof(global_data));
 }
 
 // -----------------------------------------------------------------------------
@@ -155,30 +166,28 @@ void setup(){
     connect_espnow();
     connect_mpu();
 
-    data_recv.type = '1';
-    status.player = false;
-    while (!status.player){
+    global_status.esp_main = 0;
+    global_status.esp_player = 1;
+    global_status.send_recv = 0;
+    while (!global_status.esp_main){
         // for debug
         // printf("ESP32 main not found!\n");
 
-        esp_now_send(main_macAddr, (uint8_t *) &data_recv, sizeof(data_recv));
+        esp_now_send(main_macAddr, (uint8_t *) &global_status, sizeof(global_status));
         delay(40);
     }
     printf("ESP32 main found.\n");
-
-    data_recv.type = '0';
-    esp_now_send(main_macAddr, (uint8_t *) &data_recv, sizeof(data_recv));
     printf("setup is success.\n");
 }
 
 void loop(){
-    while (status.send){
+    while (global_status.send_recv){
         read_mpu6050();
         delay(150);
     }
 
     // for debug
-    // read_sensors();
+    // read_sensors()
 
     delay(150);
 }
